@@ -123,7 +123,7 @@ This report provides a longitudinal analysis of the COVID-19 pandemic, tracking 
 All data utilized in this report is sourced from the Johns Hopkins University Center for Systems Science and Engineering (CSSE) via their GitHub repository at <https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/>.
 
 ## Purpose of the Report
-This analysis report aims to utilize geo-spatial mapping to visualize the shifting density of the pandemic longitudinally through four distinct snapshots in time: the end of 2020, 2021, and 2022. This report will show how the cumulative totals shifted as the years progressed. To keep things organized, I'm going to look at this in two stages: first, I'll examine the big picture of global trends, and then I'll zoom in to see what was happening internally across the United States.
+The aim of this report is to track how the COVID-19 pandemic shifted geographically from 2020 through 2022. By using maps to visualize data at three key points in time, I explore the relationship between case numbers and total deaths. The report is structured in two parts: first, a "big picture" look at global trends, followed by a detailed "zoom-in" on the United States. This analysis concludes with a predictive model designed to help policymakers anticipate mortality trends based on rising case counts.To ensure a responsible interpretation of the data, the report explicitly addresses potential biases, including differences in state-level testing access and reporting protocols.
 
 
 ```{r Create world map by year,warning=FALSE}
@@ -367,6 +367,9 @@ kable(Top5_USDeaths,
 
 ### Results: By the end of 2022, California, Texas, Florida, and New York consistently ranked as the top four states for both cumulative COVID-19 cases and total deaths. Illinois rounded out the top five for highest case counts, while Pennsylvania ranked fifth in total mortality.
 
+
+### Examine Relationship between Cases and Deaths
+### Develop Models to Predict Deaths from Covid19
 ```{r Create Plot to show cumulative deaths and cases,warning=FALSE}
 
 ## Relationship between cumulative cases and cumulative deaths. 
@@ -412,6 +415,30 @@ US_state_totals %>% slice_max(deaths_per_thou, n=10)%>% select(deaths_per_thou, 
 
 
 ```
+
+### Predictive Models
+
+```{r Create Model and Plot to predict deaths from cases,warning=FALSE}
+## Modeling data
+mod <-lm(deaths_per_thou ~ cases_per_thou, data=US_state_totals)
+
+summary(mod)
+
+## check min and max to determine the grid range.
+US_state_totals %>% slice_min(cases_per_thou)
+US_state_totals %>% slice_max(cases_per_thou)
+
+x_grid<-seq(1,450)
+new_df<-tibble(cases_per_thou = x_grid)
+US_tot_w_pred<-US_state_totals %>% mutate(pred=predict(mod))
+
+
+US_tot_w_pred %>% ggplot()+
+  geom_point(aes(x=cases_per_thou, y=deaths_per_thou), color="blue")+
+  geom_point(aes(x=cases_per_thou, y=pred), color="yellow")
+
+```
+
 
 ### Results: 
 #### COVID-19 cases and deaths in the U.S. followed similar geographic distributions, consistent with global trends. An analysis of per capita data reveals distinct outliers: Rhode Island, Alaska, and Kentucky led the nation in case density. Conversely, the highest death rates per 1,000 people were concentrated in Arizona, Mississippi, and Oklahoma.
