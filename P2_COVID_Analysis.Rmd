@@ -1,9 +1,10 @@
 ---
-title: "Test_GovData"
+title: "From Global Trends to Local Predictions: Analyzing COVID-19 Data"
 output: html_document
 date: "2026-01-22"
 author: "KZH"
 
+## https://github.com/zsaladk/RCodes_Analysis_CUHW/blob/main/P2_COVID_Analysis.Rmd
 ---
 
 ```{r setup, include=FALSE}
