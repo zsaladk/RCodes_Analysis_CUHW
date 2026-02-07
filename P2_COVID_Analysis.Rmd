@@ -1,0 +1,424 @@
+---
+title: "Test_GovData"
+output: html_document
+date: "2026-01-22"
+author: "KZH"
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Load Libraries, echo = FALSE, message=FALSE,warning=FALSE}
+library(devtools)
+library(tidyverse)
+library('dplyr')
+library("readxl")
+library(maps)
+library(ggrepel)
+library("lubridate") 
+library("writexl")
+library(data.table)
+library(jpeg)
+library(png)
+library(magick)
+library(ggplot2)
+library(knitr)
+library(scales)
+```
+
+
+```{r read files, echo=FALSE,warning=FALSE}
+## Reproducible: read covid data 
+
+url_in<-"https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names<-c("time_series_covid19_confirmed_US.csv",  "time_series_covid19_confirmed_global.csv","time_series_covid19_deaths_US.csv","time_series_covid19_deaths_global.csv")
+
+urls<-str_c(url_in,file_names)
+
+df_covid_us<-read_csv(urls[1])
+df_covid_global<-read_csv(urls[2])
+df_death_us<-read_csv(urls[3])
+df_death_global<-read_csv(urls[4])
+
+
+## Read map data using R library.
+
+world_map_data <- map_data("world") 
+
+US_map_data <- map_data("state")
+
+```
+
+```{r global data cleaning,warning=FALSE}
+
+#table(df_covid_global$`Country/Region`)
+## Aggregate at the Country Level
+
+## sum all the values in the date columns for each country
+
+df_global_cases <- df_covid_global %>%
+  # Remove columns not used to aggregate at the country level
+  pivot_longer(
+    cols = -c(`Country/Region`, `Province/State`,Lat,Long),
+    names_to = "date", 
+    values_to = "cases"
+  ) 
+
+
+df_global_deaths <- df_death_global %>%
+  # Remove columns not used to aggregate at the country level
+  pivot_longer(
+    cols = -c(`Country/Region`, `Province/State`,Lat,Long),
+    names_to = "date", 
+    values_to = "deaths"
+  ) %>%
+  select(-c( Lat, Long)) 
+
+global<-df_global_cases %>%
+  full_join(df_global_deaths)%>%
+  rename(Country_Region=`Country/Region`,
+         Province_State=`Province/State`)%>%
+  mutate(date=mdy(date))%>%
+  mutate(country_name=Country_Region)%>%
+  mutate(Year=substr(date,1,4))%>%
+  subset(Year!="2023")
+
+summary (global)
+
+global_country<-global %>%
+  subset(cases>10)%>%
+  group_by(Country_Region, Province_State, Year) %>%
+  filter(date==max(date))%>%
+  mutate(Pct_Deaths_CountryRegion=deaths/cases)%>%
+  ungroup()%>%
+  group_by(Country_Region, Year)%>%
+  mutate(Country_TotalCases=sum(cases))%>%
+  mutate(Country_TotalDeaths=sum(deaths))%>%
+  mutate(Pct_Deaths_Country=Country_TotalDeaths/Country_TotalCases)%>%
+  ungroup()
+
+
+```
+
+
+
+```{r count stats,warning=FALSE}
+
+## Count of the countries in the global cases data set
+Cnt_Country=n_distinct(df_global_cases$`Country/Region`)
+
+## count of the states and territories in the US cases data set.
+Cnt_USState=n_distinct(df_covid_us$Province_State)
+
+```
+
+## Introduction
+
+This report provides a longitudinal analysis of the COVID-19 pandemic, tracking the progression of cumulative cases and fatalities across `r paste0(Cnt_Country)` countries and `r paste0(Cnt_USState)` U.S. states and territories.This analysis examines the evolving relationship between infection rates and mortality on both a domestic and global scale.
+
+All data utilized in this report is sourced from the Johns Hopkins University Center for Systems Science and Engineering (CSSE) via their GitHub repository at <https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/>.
+
+## Purpose of the Report
+This analysis report aims to utilize geo-spatial mapping to visualize the shifting density of the pandemic longitudinally through four distinct snapshots in time: the end of 2020, 2021, and 2022. This report will show how the cumulative totals shifted as the years progressed. To keep things organized, I'm going to look at this in two stages: first, I'll examine the big picture of global trends, and then I'll zoom in to see what was happening internally across the United States.
+
+
+```{r Create world map by year,warning=FALSE}
+
+## Cases by year
+
+ggplot() +
+  # Draw world borders
+  geom_polygon(data = world_map_data, aes(x = long, y = lat, group = group), 
+               fill = "gray95", color = "gray85") +
+  # Add dots for each year
+  geom_point(data = global_country, 
+             aes(x = Long, y = Lat, size = cases, color = cases), 
+             alpha = 0.4) +
+  # "Heat" color scale with 10K/10M labels
+  scale_color_gradient(
+    low = "yellow", 
+    high = "brown", 
+    labels = label_number(scale_cut = cut_short_scale()),
+    guide = guide_colorbar(title.position = "top", barwidth = 10)
+  ) +
+  # Size scale with 10K/10M labels
+  scale_size_continuous(
+    range = c(0.5, 8), 
+    labels = label_number(scale_cut = cut_short_scale()),
+    guide = guide_legend(title.position = "top")
+  ) +
+  # FACET BY YEAR
+  facet_wrap(~Year, ncol = 2) + 
+  theme_minimal() +
+  labs(
+    title = "Evolution of Global COVID-19 Cases",
+    subtitle = "Year-end snapshots (2021-2023)",
+    size = "Cumulative Cases",
+    color = "Total Cases",
+    x = NULL, y = NULL
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "horizontal", # Keeps size and color legends side-by-side
+    legend.margin = margin(t = 10),
+    strip.text = element_text(size = 14, face = "bold"),
+    panel.background = element_rect(fill = "white", color = NA)
+  )
+
+
+
+# Death by Year
+ggplot() +
+  # Draw world borders
+  geom_polygon(data = world_map_data, aes(x = long, y = lat, group = group), 
+               fill = "gray95", color = "gray85") +
+  # Add dots for each year
+  geom_point(data = global_country, 
+             aes(x = Long, y = Lat, size = deaths, color = deaths), 
+             alpha = 0.4) +
+  # 1. FIX ASPECT RATIO: Use quickmap instead of sf
+  coord_quickmap() + 
+  # 2. SHORTHAND LABELS: Change to 10K/10M
+  scale_color_gradient(
+    low = "lightblue", 
+    high = "purple", 
+    labels = label_number(scale_cut = cut_short_scale()),
+    guide = guide_colorbar(title.position = "top", barwidth = 10)
+  ) +
+  scale_size_continuous(
+    range = c(0.5, 8), 
+    labels = label_number(scale_cut = cut_short_scale()),
+    guide = guide_legend(title.position = "top")
+  ) +
+  facet_wrap(~Year, ncol = 2) + 
+  theme_minimal() +
+  labs(
+    title = "Evolution of Global COVID-19 Deaths",
+    subtitle = "Year-end snapshots: Cumulative totals",
+    size = "Cumulative Deaths",
+    color = "Total Deaths",
+    x = NULL, y = NULL
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    strip.text = element_text(size = 14, face = "bold"),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank()
+  )
+
+
+# Percent of Deaths by Year
+ggplot() +
+  # Draw world borders
+  geom_polygon(data = world_map_data, aes(x = long, y = lat, group = group), 
+               fill = "gray95", color = "gray85") +
+  # Add dots for each year
+  geom_point(data = global_country, 
+             aes(x = Long, y = Lat, size = Pct_Deaths_CountryRegion, color = Pct_Deaths_CountryRegion), 
+             alpha = 0.4) +
+  # "Heat" color scale
+  scale_color_gradient(low = "lightpink", high = "red", labels = scales::comma) +
+  scale_size_continuous(range = c(0.5, 8), labels = scales::comma) +
+  # FACET BY YEAR: This creates a separate map for each year
+  facet_wrap(~Year, ncol = 2) + 
+  theme_minimal() +
+  labs(
+    title = "Evolution of Global COVID-19 Death Rates",
+    subtitle = "Year-end snapshots by Province/State",
+    size = "Cumulative Death Rates (Deaths/Cases)",
+    color = "Death Rates (Deaths/Cases)",
+    x = NULL, y = NULL
+  ) +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(size = 14, face = "bold"), # Year headings
+    panel.background = element_rect(fill = "white", color = NA)
+  )
+
+```
+
+
+### Results:
+####The maps reveal that COVID-19 case counts and total deaths followed a consistent geographic progression between 2020 and 2022. Initial major clusters emerged in the U.S. and Brazil, eventually expanding to include heavy concentrations across the U.S., Brazil, India, and Russia. In contrast, death rates followed a distinct trajectory. While 2020 saw disproportionately high death rates in the West/Middle East regions, these figures gradually stabilized, reaching a more uniform distribution globally over the following two years.
+
+
+
+
+
+```{r print freq table of top 5 countries with highest Covid cases, echo=FALSE,warning=FALSE}
+
+# Create the filtered table
+Top5_GlobalCases <- global_country %>%
+  distinct(Country_Region, Country_TotalCases, Year)%>%
+  group_by(Year) %>%
+  # Arrange by cases descending and take the top 5
+  slice_max(order_by = Country_TotalCases, n = 5) %>%
+  ungroup()
+
+# Render the table
+kable(Top5_GlobalCases, 
+      caption = "Top 5 Countries with Highest Covid Cases (2021-2023)")
+```
+
+
+### Conclusion: 
+####The table shows that the U.S. consistently records one of the highest total number of COVID cases from 2020 to 2022.
+
+
+## The following analyses focus on the U.S. Covid Data.
+
+
+```{r US data cleaning,warning=FALSE}
+
+## pivot the US datasets.
+df_US_cases <- df_covid_us %>%
+  pivot_longer(
+    cols = -(UID:Combined_Key),
+    names_to = "date", 
+    values_to = "cases"
+  ) %>%
+  select(Admin2:cases)%>%
+  mutate(date=mdy(date))%>%
+  select(-c(Lat, Long_))
+
+
+
+
+df_US_deaths <- df_death_us %>%
+  pivot_longer(
+    cols = -(UID:Population),
+    names_to = "date", 
+    values_to = "deaths"
+  ) %>%
+  select(Admin2:deaths)%>%
+  mutate(date=mdy(date))%>%
+  select(-c(Lat,Long_))
+
+US<-df_US_cases %>%
+  full_join(df_US_deaths)%>%
+  rename(Country_Region=Country_Region,
+         Province_State=Province_State)%>%
+  mutate(country_name=Country_Region)%>%
+  mutate(Year=substr(date,1,4))%>%
+  subset(Year!="2023")
+
+summary (US)
+
+
+## sum all the values in the last date columns for each State
+
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, date)%>%
+  summarize(cases=sum(cases), deaths=sum(deaths),
+            Population=sum(Population))%>%
+  mutate(deaths_per_mill=deaths * 1000000/Population)%>%
+  select(Province_State, Country_Region, date, cases, deaths,deaths_per_mill,Population)%>%
+  ungroup()
+
+
+US_totals<-US_by_state %>%
+  group_by(Country_Region, date)%>%
+  summarize(cases=sum(cases), deaths=sum(deaths),Population=sum(Population))%>%
+  mutate(deaths_per_mill=deaths*1000000/Population)%>%
+  select(Country_Region, date, cases, deaths, deaths_per_mill,Population)%>%
+  ungroup()
+
+## Add number of day gaps to get a clear picture
+df_US_cases <- US_by_state %>%
+  mutate(new_cases=cases-lag(cases),
+         new_deaths=deaths-lag(deaths))
+
+df_US_totals<-US_totals %>%
+  mutate(new_cases=cases-lag(cases),
+         new_deaths=deaths-lag(deaths))
+
+```
+
+### Top 5 U.S. States by Cumulative COVID-19 Cases and Deaths (as of December 31, 2022)
+
+```{r print freq table of top 5 states with highest Covid cases, echo=FALSE,warning=FALSE}
+
+# Create the filtered table
+Top5_USCases <- US_by_state %>%
+  subset(date=="2022-12-31")%>%
+  distinct(Province_State, deaths, cases, Population)%>%
+  # Arrange by cases descending and take the top 5
+  slice_max(order_by = cases, n = 5) 
+
+Top5_USDeaths <- US_by_state %>%
+  subset(date=="2022-12-31")%>%
+  distinct(Province_State, deaths, cases, Population)%>%
+  # Arrange by cases descending and take the top 5
+  slice_max(order_by = deaths, n = 5) 
+
+# Render the table
+kable(Top5_USCases, 
+      caption = "Top 5 States with Highest Covid Cases (2021-2022)")
+
+kable(Top5_USDeaths, 
+      caption = "Top 5 States with Highest Covid Deaths (2021-2022)")
+
+```
+
+### Results: By the end of 2022, California, Texas, Florida, and New York consistently ranked as the top four states for both cumulative COVID-19 cases and total deaths. Illinois rounded out the top five for highest case counts, while Pennsylvania ranked fifth in total mortality.
+
+```{r Create Plot to show cumulative deaths and cases,warning=FALSE}
+
+## Relationship between cumulative cases and cumulative deaths. 
+
+US_totals %>%
+  filter (cases >0)%>%
+  ggplot(aes(x=date, y=cases))+
+  geom_line(aes(color="cases"))+
+  geom_point(aes(color="cases"))+
+  geom_line(aes(y=deaths, color="deaths"))+
+  geom_point(aes(y=deaths,color="deaths"))+
+  scale_y_log10()+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle=90))+
+  labs(title="Covid19 in US: Cumulative cases and deaths", y=NULL)
+
+
+## plot to examine the relationship between new cases and new deaths
+
+df_US_totals %>%
+  ggplot(aes(x=date, y=new_cases))+
+  geom_line(aes(color="new_cases"))+
+  geom_point(aes(color="new_cases"))+
+  geom_line(aes(y=new_deaths, color="new_deaths"))+
+  geom_point(aes(y=new_deaths, color="new_deaths"))+
+  scale_y_log10()+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle=90))+
+  labs(title="COVID19 in US: Daily new cases and deaths", y=NULL)
+
+## Clean data to analyze state level data
+US_state_totals<-df_US_cases %>%
+  group_by(Province_State)%>%
+  summarize(deaths=max(deaths),cases=max(cases),
+            population=max(Population),
+            cases_per_thou=1000*cases/population,
+            deaths_per_thou=1000*deaths/population)%>%
+  filter(cases>0, population>0)
+
+# check the top 10 number of deaths per thousand.
+US_state_totals %>% slice_max(cases_per_thou, n=10)%>% select(deaths_per_thou, cases_per_thou,everything())
+US_state_totals %>% slice_max(deaths_per_thou, n=10)%>% select(deaths_per_thou, cases_per_thou,everything())
+
+
+```
+
+### Results: 
+#### COVID-19 cases and deaths in the U.S. followed similar geographic distributions, consistent with global trends. An analysis of per capita data reveals distinct outliers: Rhode Island, Alaska, and Kentucky led the nation in case density. Conversely, the highest death rates per 1,000 people were concentrated in Arizona, Mississippi, and Oklahoma.
+
+### Potential Biasin the Data Interpretation:
+#### While the correlation between cases and deaths is strong, several factors may bias the per capita rankings. States like Rhode Island and Alaska show up at the top of the list for case density, but a big reason for that is they were just much more aggressive with testing. They had the mandates and the supplies to find more cases. On the flip side, states that didn’t test as much are probably reporting numbers that are artificially low—they simply weren't catching everyone who was sick.There’s often a 'paperwork lag' with death certificates, and different states had different rules for what actually counted as a COVID death. For instance, Arizona and Mississippi might define a COVID death differently—like whether someone died from the virus or just happened to have it when they died.High death rates aren't always just about the virus spreading faster; it’s often about who it’s hitting. States with older populations or higher rates of health issues like diabetes and obesity are naturally going to see more severe outcomes.
+
+### Conclusion.
+#### When we look at the global stage, the U.S. stands out with the highest total numbers. But once we dive deeper into the state-level data, we see that "most cases" doesn't always mean "highest risk." While the U.S. generally follows global patterns where cases and deaths rise together, the per capita leaders vary significantly. States like Alaska and Rhode Island topped the charts for case density—likely due to aggressive testing—while states like Mississippi and Arizona saw the highest death rates, likely reflecting older populations or healthcare challenges. Ultimately, these numbers aren't just about the virus; they're a reflection of how each state tested, reported, and cared for its citizens.
+
