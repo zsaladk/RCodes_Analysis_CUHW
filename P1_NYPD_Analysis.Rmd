@@ -1,0 +1,322 @@
+---
+title: "Analysis of NYDP Shooting Incidents"
+author: "KZH"
+date: "2026-01-25"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r library attach, include=FALSE}
+# install.packages(c( "sf", "ggthemes"))
+# install.packages("tigris")-US census shapes
+
+library(tigris)
+library(tinytex)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(sf)
+library(ggthemes)
+
+```
+
+```{r data pull, include=TRUE}
+
+## Reproducible: Pull shooting incidents data directly from the website. 
+df<-read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+
+## Reproducible: Pull population data directly from the website.
+df_pop<-read_csv("https://data.cityofnewyork.us/api/views/xywu-7bv9/rows.csv?accessType=DOWNLOAD")
+
+## Check variable names
+names(df)
+names(df_pop)
+
+## check duplicates
+sum(duplicated(df$INCIDENT_KEY))
+
+## duplicated incident keys were found by age group and/or race group, and murder flag.
+
+## This analysis only focuses on locations and incident types and thus, duplicates were removed.
+df_analysis<-df %>%
+  distinct(INCIDENT_KEY, OCCUR_DATE, OCCUR_TIME, BORO,X_COORD_CD,
+           Y_COORD_CD, Latitude,Longitude, Lon_Lat)
+
+sum(duplicated(df_analysis$INCIDENT_KEY))
+
+```
+
+```{r intro data analysis,  warning=FALSE}
+## Generate statistics for Introduction
+
+## Check time frame.
+min_dt=min(df_analysis$OCCUR_DATE)
+max_dt=max(df_analysis$OCCUR_DATE)
+
+N_Incident=n_distinct(df$INCIDENT_KEY)
+
+```
+
+## Introduction
+
+This report analyzes historical shooting incident data in New York City, ranging from `r paste0(min_dt)` to `r paste0(max_dt)`. The data set includes `r paste0(N_Incident)` records in total. It provides a granular look at the relationship between violent crime and geography.
+
+Each record identifies a specific shooting event, marked by precise geographic coordinates and time stamps. Data were manually curated and reviewed by the NYPD's Office of Management Analysis and Planning and can be found at <https://catalog.data.gov/dataset>.
+
+## Purpose of the Report
+This analysis report aims to uncover spatial and time patterns with shooting incidents across the NYC boroughs.It investigates NYC shooting trends from 2006 to 2024, focusing on geographic frequency and long-term annual trajectories across the five borough.It examines monthly seasonality to identify peak incident periods and evaluates the accuracy of predictive modeling, specifically comparing how model effectiveness varies between high-volume boroughs like Brooklyn and lower-volume areas like Staten Island.
+
+
+## Overview of Shooting Incidents in NYC in Map
+
+```{r geographic analysis, warning=FALSE}
+## Geographic location analysis
+# Bronx (005), Kings/Brooklyn (047), New York/Manhattan (061), 
+# Queens (081), Richmond/Staten Island (085)
+
+#nyc_fips <- c("005", "047", "061", "081", "085")
+
+nyc_map <- counties(state = "NY", cb = TRUE, year = 2023) %>%
+  filter(COUNTYFP %in% c("005", "047", "061", "081", "085")) %>%
+  mutate(Borough_Name = case_when(
+    COUNTYFP == "005" ~ "The Bronx",
+    COUNTYFP == "047" ~ "Brooklyn",
+    COUNTYFP == "061" ~ "Manhattan",
+    COUNTYFP == "081" ~ "Queens",
+    COUNTYFP == "085" ~ "Staten Island"
+  ))
+
+# 2. Get the centers for the new names
+nyc_labels <- nyc_map %>%
+  st_centroid() %>%
+  st_coordinates() %>%
+  as.data.frame() %>%
+  cbind(Borough_Name = nyc_map$Borough_Name)
+
+# 3. Create the plot
+ggplot() +
+  geom_sf(data = nyc_map, aes(fill = Borough_Name), color = "white", alpha = 0.5) +
+  geom_point(data = df_analysis, 
+             aes(x = Longitude, y = Latitude), 
+             color = "darkgreen", size = 2) +
+  # Add the corrected labels
+  geom_text(data = nyc_labels, 
+            aes(x = X, y = Y, label = Borough_Name), 
+            fontface = "bold", size = 4) +
+  scale_fill_viridis_d(option = "mako") + # Professional color palette
+  theme_void() +
+  theme(legend.position = "none") +
+  labs(title = "Overview of Shooting Incidents in NYC in Map")
+
+```
+
+## Frequency of Shooting Incidents by NYC Borough
+
+```{r boro frequency analysis, echo=FALSE, warning=FALSE}
+## Frequency analysis of borough 
+
+Boro_Desc<-df_analysis %>%
+  group_by(BORO)%>%
+  summarize(
+    Total_Incidents = n_distinct(INCIDENT_KEY))%>%
+  mutate(Percentage = round((Total_Incidents / sum(Total_Incidents)) * 100, 2)) %>%
+  arrange(desc(Total_Incidents))
+
+```
+
+```{r print freq table of incidents by boro, echo=FALSE,warning=FALSE}
+knitr::kable(Boro_Desc,
+ caption = "Total Shooting Incidents by NYC Borough (2006-2024)")
+```
+
+
+```{r print frequency bar chart,echo=FALSE, warning=FALSE}
+ggplot(Boro_Desc, aes(x = BORO, y = Total_Incidents, fill=BORO))+
+  geom_col()+
+  theme_dark()+
+  labs(x = "NYC Borough", 
+       y = "Incident Count")
+
+```
+```{r statistical show codes}
+## Create data frame to analyze annual trends of incidents by Borough
+Year_Desc<-df_analysis %>%
+  mutate(YR_Case=substr(OCCUR_DATE,7,10))%>%
+  group_by(BORO,YR_Case)%>%
+  summarize(
+    cases = n_distinct(INCIDENT_KEY))%>%
+  select(BORO,YR_Case,cases)%>%
+  ungroup()
+
+## Create data frame to analyze monthly trends of incidents by Borough
+Month_Desc<-df_analysis %>%
+  mutate(Mon_Case=substr(OCCUR_DATE,1,2))%>%
+  group_by(BORO,Mon_Case)%>%
+  summarize(
+    cases = n_distinct(INCIDENT_KEY))%>%
+  select(BORO,Mon_Case,cases)%>%
+  ungroup()
+
+```
+
+```{r statistical analysis, include = FALSE, warning=FALSE}
+## Frequency analysis of year & month 
+
+Year_Desc<-df_analysis %>%
+  mutate(YR_Case=substr(OCCUR_DATE,7,10))%>%
+  group_by(BORO,YR_Case)%>%
+  summarize(
+    cases = n_distinct(INCIDENT_KEY))%>%
+  select(BORO,YR_Case,cases)%>%
+  ungroup()
+
+
+Month_Desc<-df_analysis %>%
+  mutate(Mon_Case=substr(OCCUR_DATE,1,2))%>%
+  group_by(BORO,Mon_Case)%>%
+  summarize(
+    cases = n_distinct(INCIDENT_KEY))%>%
+  select(BORO,Mon_Case,cases)%>%
+  ungroup()
+
+YearMonth_Desc<-df_analysis %>%
+  mutate(YRMon_Case=paste0(substr(OCCUR_DATE,1,2),"/",substr(OCCUR_DATE,7,10)))%>%
+  group_by(BORO,YRMon_Case)%>%
+  summarize(
+    cases = n_distinct(INCIDENT_KEY))%>%
+  select(BORO,YRMon_Case,cases)%>%
+  ungroup()%>%
+  mutate(Month=substr(YRMon_Case,1,2))%>%
+  mutate(Year=substr(YRMon_Case,4,7))%>%
+  mutate(YRMon_BORO_Case=paste0(YRMon_Case,"-",BORO))
+
+## Generate Model
+
+YearMonth_Desc$BORO <- as.factor(YearMonth_Desc$BORO)
+YearMonth_Desc$Month <- as.factor(YearMonth_Desc$Month)
+YearMonth_Desc$Year <- as.factor(YearMonth_Desc$Year)
+
+mod<-lm(cases ~ BORO+Month, data = YearMonth_Desc)
+
+
+summary(mod)
+
+YearMonth_Desc%>% slice_min(cases)
+
+YearMonth_Desc%>% slice_max(cases)
+
+x_grid<-seq(1,150)
+#df_mod<-tibble(cases = x_grid)
+
+## prediction model
+df_pred<-YearMonth_Desc %>% mutate(pred=predict(mod))
+
+
+df_pred %>% ggplot()+
+  geom_point(aes(x=Month,y=cases), color = "red")+
+   geom_point(aes(x=Month,y=pred), color = "blue")+
+  facet_wrap(~BORO, scales = "free_y")
+
+
+#df_pred %>% arrange(YRMon_BORO_Case) %>% ggplot()+
+ # geom_point(aes(x=YRMon_BORO_Case,y=cases), color = "red")+
+  # geom_point(aes(x=YRMon_BORO_Case,y=pred), color = "blue")
+
+```
+
+
+## Annual Trends in Shooting Incidents by NYC Boroughs
+### Conclusion: Brooklyn consistently records the highest total number of shooting incidents annually, followed by the Bronx. Staten Island maintains the lowest incident totals across all years.
+
+```{r display Year time analysis, echo=FALSE,warning=FALSE}
+
+
+Year_Desc %>%
+  ggplot(aes(x = YR_Case, y = cases, color = BORO, group = BORO)) +
+  geom_line() +
+  geom_point(size =1) +
+  labs(title = "Multi-Year Borough Breakdown of Shooting Incidents",
+       x = "Year of Occurence",
+       y = "Number of Cases",
+       color = "Borough") +
+  theme_minimal()
+
+```
+
+
+## Monthly Distribution of Shooting Incidents by Borough: 2006–2024
+Conclusion: Across all locations, incidents consistently peak during the summer months of June through August.
+
+```{r display Month time analysis, echo=FALSE,warning=FALSE}
+
+Month_Desc %>%
+  ggplot(aes(x = Mon_Case, y = cases, color = BORO, group = BORO)) +
+  geom_line() +
+  geom_point(size =1) +
+  labs(title = "Monthly Analysis of NYC Shooting Patterns by Borough",
+       x = "Year of Occurence",
+       y = "Number of Cases",
+       color = "Borough") +
+  theme_minimal()
+
+```
+
+## Model: Predict the Number of Incidents Using Month
+
+```{r statistical predictive model show codes}
+## Create data frame to generate a simple model to see how month dummy variables are related to the number of shooting incidents.
+
+YearMonth_Desc<-df_analysis %>%
+  mutate(YRMon_Case=paste0(substr(OCCUR_DATE,1,2),"/",substr(OCCUR_DATE,7,10)))%>%
+  group_by(BORO,YRMon_Case)%>%
+  summarize(
+    cases = n_distinct(INCIDENT_KEY))%>%
+  select(BORO,YRMon_Case,cases)%>%
+  ungroup()%>%
+  mutate(Month=substr(YRMon_Case,1,2))%>%
+  mutate(Year=substr(YRMon_Case,4,7))
+
+## Create factor that serves as dummy variables in the model.
+YearMonth_Desc$Month <- as.factor(YearMonth_Desc$Month)
+
+## Predictive Model - include one variable
+mod<-lm(cases ~ Month, data = YearMonth_Desc)
+
+summary(mod)
+
+
+
+
+```
+
+## Model Graphs: Actual vs. Predicted Incidents by Borough Using Month
+This chart compares actual versus predicted monthly incidents by borough. It’s clear that using "month" as the only variable isn't enough for a solid prediction—it really struggles with the extremes, missing the mark on both high-volume Brooklyn and low-volume Staten Island. Essentially, we need to factor in more variables to get the accuracy we're looking for.
+
+```{r pressure}
+
+## Create data frame to add predicted values for comparison.
+df_pred<-YearMonth_Desc %>% mutate(pred=predict(mod))
+
+df_pred %>% ggplot()+
+  geom_point(aes(x=Month,y=cases), color = "red")+
+   geom_point(aes(x=Month,y=pred), color = "blue")+
+  facet_wrap(~BORO, scales = "free_y")
+```
+
+## Conclusion
+In summary, the preliminary results confirm that shooting incidents consistently peak every summer across all boroughs. Brooklyn and the Bronx consistently recorded the highest annual incident totals, while Staten Island remained the lowest. NYC’s shooting trends are too complex to predict by month alone, suggesting we need more variables for a better forecast.
+
+
+## Potential Data Bias
+While the NYPD Shooting Incident data provide a comprehensive view, some potential biases may impact the accuracy of the analyses.
+
+There can be a risk of measurement bias. The definition of "reportable incident" is not applied consistently across different NYPD departments in different boroughs. For example, minor incidents may be rigorously documented in Brooklyn but not in Staten Island. Also, if the volume of the incidents being solved is tied to officers' performance in some areas, the data accuracy may be impacted by the incentives behind it. 
+
+The significantly higher incident counts in Brooklyn and Bronx may be influenced by sampling bias. Those two areas are historically perceived as "unsafe" and often receive more NYPD patrols. The increased presence of NYPD can be linked to a higher probability of documenting incidents. 
+
