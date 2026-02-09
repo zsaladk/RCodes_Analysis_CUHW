@@ -75,7 +75,7 @@ This analysis report aims to uncover spatial and time patterns with shooting inc
 
 ## Overview of Shooting Incidents in NYC in Map
 
-```{r geographic analysis, warning=FALSE}
+```{r geographic analysis, warning=FALSE,message = FALSE,results = 'hide'}
 ## Geographic location analysis
 # Bronx (005), Kings/Brooklyn (047), New York/Manhattan (061), 
 # Queens (081), Richmond/Staten Island (085)
